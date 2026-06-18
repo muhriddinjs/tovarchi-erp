@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import { getAuthUser } from "@/lib/auth";
 
 type SupplyItemInput = {
   productId: string;
@@ -21,6 +22,7 @@ export async function createSupply(data: {
   exchangeRateCnyToUsd: number | string;
   items: SupplyItemInput[];
 }): Promise<ActionResult> {
+  const user = await getAuthUser();
   const { date, supplierName, exchangeRateCnyToUsd, items } = data;
 
   if (!supplierName || !exchangeRateCnyToUsd || items.length === 0) {
@@ -34,15 +36,15 @@ export async function createSupply(data: {
   }
 
   try {
-    // Fetch ALL referenced products in a single query (fixes N+1)
+    // Fetch ALL referenced products in a single query — filtered by userId
     const productIds = [...new Set(items.map((item) => item.productId))];
     const products = await prisma.product.findMany({
-      where: { id: { in: productIds } },
+      where: { id: { in: productIds }, userId: user.id },
     });
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // Validate all products exist
+    // Validate all products exist and belong to the user
     for (const item of items) {
       if (!productMap.has(item.productId)) {
         return { success: false, error: `Tovar topilmadi (ID: ${item.productId}).` };
@@ -66,6 +68,7 @@ export async function createSupply(data: {
         .plus(cargoCostPerPairUsd);
 
       return {
+        userId: user.id,
         productId: item.productId,
         sacksQuantity: item.sacksQuantity,
         remainingSacks: item.sacksQuantity,
@@ -78,6 +81,7 @@ export async function createSupply(data: {
 
     const supply = await prisma.supply.create({
       data: {
+        userId: user.id,
         date,
         supplierName,
         exchangeRateCnyToUsd: exchangeRate,
@@ -98,7 +102,10 @@ export async function createSupply(data: {
 }
 
 export async function getSupplies() {
+  const user = await getAuthUser();
+
   return await prisma.supply.findMany({
+    where: { userId: user.id },
     orderBy: { createdAt: "desc" },
     include: {
       items: {

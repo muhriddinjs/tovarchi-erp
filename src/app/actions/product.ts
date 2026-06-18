@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase";
+import { getAuthUser } from "@/lib/auth";
 import type { Product, SupplyItem } from "@prisma/client";
 
 type ActionResult<T = unknown> = {
@@ -14,6 +15,8 @@ type ActionResult<T = unknown> = {
 };
 
 export async function createProduct(formData: FormData): Promise<ActionResult> {
+  const user = await getAuthUser();
+
   const sku = formData.get("sku") as string;
   let imageUrl = (formData.get("imageUrl") as string) || null;
   const imageFile = formData.get("imageFile") as File | null;
@@ -29,8 +32,10 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
   }
 
   try {
-    // Check for duplicate SKU
-    const existing = await prisma.product.findUnique({ where: { sku } });
+    // Check for duplicate SKU within this user's products
+    const existing = await prisma.product.findUnique({
+      where: { userId_sku: { userId: user.id, sku } },
+    });
     if (existing) {
       return { success: false, error: `"${sku}" SKU allaqachon mavjud.` };
     }
@@ -60,6 +65,7 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
 
     const product = await prisma.product.create({
       data: {
+        userId: user.id,
         sku,
         imageUrl,
         pairsPerSack,
@@ -76,13 +82,15 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
 }
 
 export async function deleteProduct(productId: string): Promise<ActionResult> {
+  const user = await getAuthUser();
+
   try {
     // Check if product is used in supply items or order items
     const usedInSupply = await prisma.supplyItem.count({
-      where: { productId },
+      where: { productId, userId: user.id },
     });
     const usedInOrder = await prisma.orderItem.count({
-      where: { productId },
+      where: { productId, userId: user.id },
     });
 
     if (usedInSupply > 0 || usedInOrder > 0) {
@@ -92,7 +100,7 @@ export async function deleteProduct(productId: string): Promise<ActionResult> {
       };
     }
 
-    await prisma.product.delete({ where: { id: productId } });
+    await prisma.product.delete({ where: { id: productId, userId: user.id } });
     revalidatePath("/admin/products");
     return { success: true, data: null };
   } catch (error: unknown) {
@@ -102,7 +110,10 @@ export async function deleteProduct(productId: string): Promise<ActionResult> {
 }
 
 export async function getProducts() {
+  const user = await getAuthUser();
+
   const products = await prisma.product.findMany({
+    where: { userId: user.id },
     orderBy: { createdAt: "desc" },
     include: {
       supplyItems: {

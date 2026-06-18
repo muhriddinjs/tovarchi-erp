@@ -1,5 +1,4 @@
-import { getCustomerTransactions } from "@/app/actions/sales";
-import prisma from "@/lib/prisma";
+import { getCustomerById, getCustomerTransactions } from "@/app/actions/sales";
 import Link from "next/link";
 import { ArrowLeft, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { notFound } from "next/navigation";
@@ -8,7 +7,7 @@ import PaymentForm from "@/components/PaymentForm";
 export default async function CustomerAktSverkaPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = await params;
   const customerId = resolvedParams.id;
-  const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+  const customer = await getCustomerById(customerId);
 
   if (!customer) {
     notFound();

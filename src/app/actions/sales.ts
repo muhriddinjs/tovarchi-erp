@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import Decimal from "decimal.js";
+import { getAuthUser } from "@/lib/auth";
 
 type OrderItemInput = {
   productId: string;
@@ -18,6 +19,7 @@ export async function createOfflineOrder(data: {
   customerId: string;
   items: OrderItemInput[];
 }): Promise<ActionResult<{ orderId: string }>> {
+  const user = await getAuthUser();
   const { customerId, items } = data;
 
   if (!customerId || items.length === 0) {
@@ -32,9 +34,9 @@ export async function createOfflineOrder(data: {
       const orderItemsData = [];
 
       for (const item of items) {
-        // Fetch product to know pairsPerSack
-        const product = await tx.product.findUnique({
-          where: { id: item.productId },
+        // Fetch product — verify ownership
+        const product = await tx.product.findFirst({
+          where: { id: item.productId, userId: user.id },
         });
 
         if (!product) {
@@ -52,10 +54,11 @@ export async function createOfflineOrder(data: {
         let remainingSacksToDeduct = requestedSacks;
         let itemTotalCostPrice = new Decimal(0);
 
-        // Find available supply items for this product, ordered by oldest first
+        // Find available supply items for this product — filtered by userId
         const availableSupplyItems = await tx.supplyItem.findMany({
           where: {
             productId: item.productId,
+            userId: user.id,
             remainingSacks: { gt: 0 },
           },
           orderBy: {
@@ -78,7 +81,7 @@ export async function createOfflineOrder(data: {
 
           // Update the SupplyItem's remaining sacks
           await tx.supplyItem.update({
-            where: { id: supplyItem.id },
+            where: { id: supplyItem.id, userId: user.id },
             data: {
               remainingSacks: supplyItem.remainingSacks - deductAmount,
             },
@@ -96,6 +99,7 @@ export async function createOfflineOrder(data: {
         totalProfitUsd = totalProfitUsd.plus(itemProfit);
 
         orderItemsData.push({
+          userId: user.id,
           productId: item.productId,
           sacksQuantity: requestedSacks,
           pairsQuantity: requestedPairs,
@@ -108,6 +112,7 @@ export async function createOfflineOrder(data: {
       // Create Order
       const order = await tx.order.create({
         data: {
+          userId: user.id,
           customerId,
           source: "OFFLINE",
           status: "COMPLETED",
@@ -122,6 +127,7 @@ export async function createOfflineOrder(data: {
       // Create Transaction
       await tx.transaction.create({
         data: {
+          userId: user.id,
           customerId,
           type: "SALE_DEBT",
           amountUsd: totalAmountUsd.negated(),
@@ -129,9 +135,9 @@ export async function createOfflineOrder(data: {
         },
       });
 
-      // Update Customer Balance (subtracting debt)
+      // Update Customer Balance (subtracting debt) — verify ownership
       await tx.customer.update({
-        where: { id: customerId },
+        where: { id: customerId, userId: user.id },
         data: {
           balanceUsd: {
             decrement: totalAmountUsd,
@@ -157,6 +163,7 @@ export async function createPayment(data: {
   amountUsd: string;
   description?: string;
 }): Promise<ActionResult> {
+  const user = await getAuthUser();
   const { customerId, amountUsd, description } = data;
 
   if (!customerId || !amountUsd) {
@@ -174,6 +181,7 @@ export async function createPayment(data: {
       // Create payment transaction
       await tx.transaction.create({
         data: {
+          userId: user.id,
           customerId,
           type: "PAYMENT",
           amountUsd: amount,
@@ -181,9 +189,9 @@ export async function createPayment(data: {
         },
       });
 
-      // Update customer balance (adding payment)
+      // Update customer balance (adding payment) — verify ownership
       await tx.customer.update({
-        where: { id: customerId },
+        where: { id: customerId, userId: user.id },
         data: {
           balanceUsd: {
             increment: amount,
@@ -202,12 +210,17 @@ export async function createPayment(data: {
 }
 
 export async function getCustomers() {
+  const user = await getAuthUser();
+
   return await prisma.customer.findMany({
+    where: { userId: user.id },
     orderBy: { createdAt: "desc" },
   });
 }
 
 export async function createCustomer(formData: FormData) {
+  const user = await getAuthUser();
+
   const name = formData.get("name") as string;
   const phone = (formData.get("phone") as string) || null;
 
@@ -217,7 +230,7 @@ export async function createCustomer(formData: FormData) {
 
   try {
     await prisma.customer.create({
-      data: { name, phone },
+      data: { userId: user.id, name, phone },
     });
     revalidatePath("/admin/customers");
     return { success: true };
@@ -228,7 +241,10 @@ export async function createCustomer(formData: FormData) {
 }
 
 export async function getOrders() {
+  const user = await getAuthUser();
+
   return await prisma.order.findMany({
+    where: { userId: user.id },
     include: {
       customer: true,
       items: {
@@ -241,9 +257,28 @@ export async function getOrders() {
   });
 }
 
+export async function getCustomerById(customerId: string) {
+  const user = await getAuthUser();
+
+  return await prisma.customer.findFirst({
+    where: { id: customerId, userId: user.id },
+  });
+}
+
 export async function getCustomerTransactions(customerId: string) {
+  const user = await getAuthUser();
+
+  // Verify customer belongs to user first
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, userId: user.id },
+  });
+
+  if (!customer) {
+    return [];
+  }
+
   return await prisma.transaction.findMany({
-    where: { customerId },
+    where: { customerId, userId: user.id },
     orderBy: { createdAt: "desc" },
   });
 }
@@ -251,6 +286,9 @@ export async function getCustomerTransactions(customerId: string) {
 // ─── Dashboard Statistics ───────────────────────────
 
 export async function getDashboardStats() {
+  const user = await getAuthUser();
+  const userId = user.id;
+
   const [
     totalProducts,
     totalSupplies,
@@ -262,15 +300,16 @@ export async function getDashboardStats() {
     remainingStockAgg,
     recentOrders,
   ] = await Promise.all([
-    prisma.product.count(),
-    prisma.supply.count(),
-    prisma.customer.count(),
-    prisma.order.count(),
-    prisma.order.aggregate({ _sum: { totalProfitUsd: true } }),
-    prisma.order.aggregate({ _sum: { totalAmountUsd: true } }),
-    prisma.customer.aggregate({ _sum: { balanceUsd: true } }),
-    prisma.supplyItem.aggregate({ _sum: { remainingSacks: true } }),
+    prisma.product.count({ where: { userId } }),
+    prisma.supply.count({ where: { userId } }),
+    prisma.customer.count({ where: { userId } }),
+    prisma.order.count({ where: { userId } }),
+    prisma.order.aggregate({ where: { userId }, _sum: { totalProfitUsd: true } }),
+    prisma.order.aggregate({ where: { userId }, _sum: { totalAmountUsd: true } }),
+    prisma.customer.aggregate({ where: { userId }, _sum: { balanceUsd: true } }),
+    prisma.supplyItem.aggregate({ where: { userId }, _sum: { remainingSacks: true } }),
     prisma.order.findMany({
+      where: { userId },
       take: 5,
       orderBy: { createdAt: "desc" },
       include: {
