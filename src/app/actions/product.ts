@@ -39,7 +39,7 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
     if (imageFile && imageFile.size > 0) {
       const filename = `${Date.now()}-${imageFile.name.replace(/[^a-zA-Z0-9.-]/g, '')}`;
       
-      const { data, error: uploadError } = await supabaseAdmin.storage
+      const { error: uploadError } = await supabaseAdmin.storage
         .from('products')
         .upload(filename, imageFile, {
           cacheControl: '3600',
