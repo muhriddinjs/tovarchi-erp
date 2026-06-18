@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase";
+import type { Product, SupplyItem } from "@prisma/client";
 
 type ActionResult<T = unknown> = {
   success: true;
@@ -111,7 +112,7 @@ export async function getProducts() {
     }
   });
 
-  return products.map(product => {
+  return products.map((product: Product & { supplyItems: SupplyItem[] }) => {
     const latestSupply = product.supplyItems[0];
     const costPriceUsd = latestSupply ? Number(latestSupply.calculatedCostPriceUsd) : 0;
     const targetPriceUsd = costPriceUsd > 0 ? costPriceUsd * 1.30 : 0;
