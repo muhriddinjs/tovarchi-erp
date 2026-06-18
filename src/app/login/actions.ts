@@ -15,8 +15,13 @@ export async function login(formData: FormData) {
     password,
   })
 
+  // ASOSIY O'ZGARISH SHU YERDA:
   if (error) {
-    return { error: 'Email yoki parol noto\'g\'ri' }
+    // 1. Vercel server loglari uchun haqiqiy xatoni konsolga chiqaramiz
+    console.error("Supabase'dan haqiqiy xato keldi:", error.message)
+
+    // 2. Ekranga (UI) qotirilgan matn emas, haqiqiy xato matnini qaytaramiz
+    return { error: error.message }
   }
 
   revalidatePath('/', 'layout')
@@ -26,7 +31,7 @@ export async function login(formData: FormData) {
 export async function logout() {
   const supabase = await createClient()
   await supabase.auth.signOut()
-  
+
   revalidatePath('/', 'layout')
   redirect('/login')
 }
