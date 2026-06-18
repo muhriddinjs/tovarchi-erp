@@ -1,0 +1,141 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────
+
+enum SupplyStatus {
+  PENDING
+  RECEIVED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum TransactionType {
+  SALE_DEBT
+  PAYMENT
+  REFUND
+  ADJUSTMENT
+}
+
+enum OrderSource {
+  OFFLINE
+  ONLINE
+}
+
+// ─── Models ─────────────────────────────────────────
+
+model Product {
+  id            String       @id @default(uuid())
+  sku           String       @unique
+  imageUrl      String?
+  pairsPerSack  Int
+  pairsPerPack  Int
+  supplyItems   SupplyItem[]
+  orderItems    OrderItem[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model Supply {
+  id                   String       @id @default(uuid())
+  date                 DateTime
+  supplierName         String
+  exchangeRateCnyToUsd Decimal
+  totalSacks           Int
+  status               SupplyStatus @default(PENDING)
+  items                SupplyItem[]
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  @@index([date])
+  @@index([status])
+}
+
+model SupplyItem {
+  id                     String   @id @default(uuid())
+  supplyId               String
+  supply                 Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade)
+  productId              String
+  product                Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sacksQuantity          Int
+  remainingSacks         Int      @default(0)
+  pairsQuantity          Int
+  factoryPriceCny        Decimal
+  cargoCostPerPairUsd    Decimal
+  calculatedCostPriceUsd Decimal
+  createdAt              DateTime @default(now())
+
+  @@index([productId, remainingSacks])
+  @@index([supplyId])
+}
+
+model Customer {
+  id           String        @id @default(uuid())
+  name         String
+  phone        String?
+  balanceUsd   Decimal       @default(0)
+  orders       Order[]
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([name])
+}
+
+model Order {
+  id             String      @id @default(uuid())
+  customerId     String
+  customer       Customer    @relation(fields: [customerId], references: [id])
+  source         OrderSource @default(OFFLINE)
+  status         OrderStatus @default(COMPLETED)
+  totalAmountUsd Decimal
+  totalProfitUsd Decimal
+  items          OrderItem[]
+  createdAt      DateTime    @default(now())
+
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id                  String   @id @default(uuid())
+  orderId             String
+  order               Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId           String
+  product             Product  @relation(fields: [productId], references: [id])
+  sacksQuantity       Int
+  pairsQuantity       Int
+  sellPricePerPairUsd Decimal
+  totalCostPriceUsd   Decimal
+  totalSellPriceUsd   Decimal
+
+  @@index([orderId])
+}
+
+model Transaction {
+  id          String          @id @default(uuid())
+  customerId  String
+  customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type        TransactionType
+  amountUsd   Decimal
+  description String?
+  createdAt   DateTime        @default(now())
+
+  @@index([customerId])
+  @@index([createdAt])
+}
